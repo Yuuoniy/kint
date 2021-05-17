@@ -1,26 +1,30 @@
 #include "PathGen.h"
 #include "ValueGen.h"
-#include <llvm/Constants.h>
-#include <llvm/Instructions.h>
-#include <llvm/Analysis/Dominators.h>
-#include <llvm/Support/CFG.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/Dominators.h>
+#include <llvm/IR/CFG.h>
 
 using namespace llvm;
 
 #define SMT VG.SMT
 
 PathGen::PathGen(ValueGen &VG, const EdgeVec &BE)
-	: VG(VG), Backedges(BE), DT(NULL) {}
+	: VG(VG), Backedges(BE), DT(NULL)
+{
+}
 
 PathGen::PathGen(ValueGen &VG, const EdgeVec &Backedges, DominatorTree &DT)
 	: VG(VG), Backedges(Backedges), DT(&DT) {}
 
-PathGen::~PathGen() {
+PathGen::~PathGen()
+{
 	for (iterator i = Cache.begin(), e = Cache.end(); i != e; ++i)
 		SMT.decref(i->second);
 }
 
-static BasicBlock *findCommonDominator(BasicBlock *BB, DominatorTree *DT) {
+static BasicBlock *findCommonDominator(BasicBlock *BB, DominatorTree *DT)
+{
 	pred_iterator i = pred_begin(BB), e = pred_end(BB);
 	BasicBlock *Dom = *i;
 	for (++i; i != e; ++i)
@@ -28,20 +32,24 @@ static BasicBlock *findCommonDominator(BasicBlock *BB, DominatorTree *DT) {
 	return Dom;
 }
 
-SMTExpr PathGen::get(BasicBlock *BB) {
+SMTExpr PathGen::get(BasicBlock *BB)
+{
 	SMTExpr G = Cache.lookup(BB);
 	if (G)
 		return G;
 	// Entry block has true guard.
-	if (BB == &BB->getParent()->getEntryBlock()) {
+	if (BB == &BB->getParent()->getEntryBlock())
+	{
 		G = SMT.bvtrue();
 		Cache[BB] = G;
 		return G;
 	}
 	pred_iterator i, e = pred_end(BB);
-	if (DT) {
+	if (DT)
+	{
 		// Fall back to common ancestors if any back edges.
-		for (i = pred_begin(BB); i != e; ++i) {
+		for (i = pred_begin(BB); i != e; ++i)
+		{
 			if (isBackedge(*i, BB))
 				return get(findCommonDominator(BB, DT));
 		}
@@ -49,7 +57,8 @@ SMTExpr PathGen::get(BasicBlock *BB) {
 	// The guard is the disjunction of predecessors' guards.
 	// Initialize to false.
 	G = SMT.bvfalse();
-	for (i = pred_begin(BB); i != e; ++i) {
+	for (i = pred_begin(BB); i != e; ++i)
+	{
 		BasicBlock *Pred = *i;
 		// Skip back edges.
 		if (!DT && isBackedge(Pred, BB))
@@ -70,15 +79,17 @@ SMTExpr PathGen::get(BasicBlock *BB) {
 	return G;
 }
 
-bool PathGen::isBackedge(llvm::BasicBlock *From, llvm::BasicBlock *To) {
-	return std::find(Backedges.begin(), Backedges.end(), Edge(From, To))
-		!= Backedges.end();
+bool PathGen::isBackedge(llvm::BasicBlock *From, llvm::BasicBlock *To)
+{
+	return std::find(Backedges.begin(), Backedges.end(), Edge(From, To)) != Backedges.end();
 }
 
-SMTExpr PathGen::getPHIGuard(BasicBlock *BB, BasicBlock *Pred) {
+SMTExpr PathGen::getPHIGuard(BasicBlock *BB, BasicBlock *Pred)
+{
 	SMTExpr E = SMT.bvtrue();
 	BasicBlock::iterator i = BB->begin(), e = BB->end();
-	for (; i != e; ++i) {
+	for (; i != e; ++i)
+	{
 		PHINode *I = dyn_cast<PHINode>(i);
 		if (!I)
 			break;
@@ -99,9 +110,13 @@ SMTExpr PathGen::getPHIGuard(BasicBlock *BB, BasicBlock *Pred) {
 	return E;
 }
 
-SMTExpr PathGen::getTermGuard(TerminatorInst *I, BasicBlock *BB) {
-	switch (I->getOpcode()) {
-	default: I->dump(); llvm_unreachable("Unknown terminator!");
+SMTExpr PathGen::getTermGuard(Instruction *I, llvm::BasicBlock *BB)
+{
+	switch (I->getOpcode())
+	{
+	default:
+		I->dump();
+		llvm_unreachable("Unknown terminator!");
 	case Instruction::Br:
 		return getTermGuard(cast<BranchInst>(I), BB);
 	case Instruction::Switch:
@@ -112,7 +127,8 @@ SMTExpr PathGen::getTermGuard(TerminatorInst *I, BasicBlock *BB) {
 	}
 }
 
-SMTExpr PathGen::getTermGuard(BranchInst *I, BasicBlock *BB) {
+SMTExpr PathGen::getTermGuard(BranchInst *I, BasicBlock *BB)
+{
 	if (I->isUnconditional())
 		return SMT.bvtrue();
 	// Conditional branch.
@@ -120,7 +136,8 @@ SMTExpr PathGen::getTermGuard(BranchInst *I, BasicBlock *BB) {
 	SMTExpr E = VG.get(V);
 	SMT.incref(E);
 	// True or false branch.
-	if (I->getSuccessor(0) != BB) {
+	if (I->getSuccessor(0) != BB)
+	{
 		assert(I->getSuccessor(1) == BB);
 		SMTExpr Tmp = SMT.bvnot(E);
 		SMT.decref(E);
@@ -129,15 +146,20 @@ SMTExpr PathGen::getTermGuard(BranchInst *I, BasicBlock *BB) {
 	return E;
 }
 
-SMTExpr PathGen::getTermGuard(SwitchInst *I, BasicBlock *BB) {
+SMTExpr PathGen::getTermGuard(SwitchInst *I, BasicBlock *BB)
+{
 	Value *V = I->getCondition();
 	SMTExpr L = VG.get(V);
-	SwitchInst::CaseIt i = I->case_begin(), e = I->case_end();
-	if (I->getDefaultDest() != BB) {
+	// SwitchInst::CaseIt i = I->case_begin(), e = I->case_end();
+	if (I->getDefaultDest() != BB)
+	{
 		// Find all x = C_i for BB.
 		SMTExpr E = SMT.bvfalse();
-		for (; i != e; ++i) {
-			if (i.getCaseSuccessor() == BB) {
+		// for (; i != e; ++i)
+		for (auto &i : I->cases())
+		{
+			if (i.getCaseSuccessor() == BB)
+			{
 				ConstantInt *CI = i.getCaseValue();
 				SMTExpr Cond = SMT.eq(L, VG.get(CI));
 				SMTExpr Tmp = SMT.bvor(E, Cond);
@@ -151,7 +173,8 @@ SMTExpr PathGen::getTermGuard(SwitchInst *I, BasicBlock *BB) {
 	// Compute guard for the default case.
 	// i starts from 1; 0 is reserved for the default.
 	SMTExpr E = SMT.bvfalse();
-	for (; i != e; ++i) {
+	for (auto &i : I->cases())
+	{
 		ConstantInt *CI = i.getCaseValue();
 		SMTExpr Cond = SMT.eq(L, VG.get(CI));
 		SMTExpr Tmp = SMT.bvor(E, Cond);

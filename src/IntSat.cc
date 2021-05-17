@@ -3,66 +3,72 @@
 #include "PathGen.h"
 #include "SMTSolver.h"
 #include "ValueGen.h"
-#include <llvm/BasicBlock.h>
-#include <llvm/Constants.h>
-#include <llvm/Instructions.h>
-#include <llvm/Function.h>
-#include <llvm/LLVMContext.h>
-#include <llvm/Module.h>
+#include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/Analysis/CFG.h>
+#include <llvm/IR/Module.h>
 #include <llvm/Pass.h>
-#include <llvm/Assembly/Writer.h>
-#include <llvm/ADT/OwningPtr.h>
+#include <llvm/IR/AssemblyAnnotationWriter.h>
+// #include <llvm/ADT/OwningPtr.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/CommandLine.h>
-#include <llvm/Support/InstIterator.h>
+#include <llvm/IR/InstIterator.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 
 using namespace llvm;
 
 static cl::opt<bool>
-SMTModelOpt("smt-model", cl::desc("Output SMT model"));
+	SMTModelOpt("smt-model", cl::desc("Output SMT model"));
 
-namespace {
+namespace
+{
 
-// Better to make this as a module pass rather than a function pass.
-// Otherwise, put `M.getFunction("int.sat")' in doInitialization() and
-// it will return NULL, since it's scheduled to run before -int-rewrite.
-struct IntSat : ModulePass {
-	static char ID;
-	IntSat() : ModulePass(ID) {}
+	// Better to make this as a module pass rather than a function pass.
+	// Otherwise, put `M.getFunction("int.sat")' in doInitialization() and
+	// it will return NULL, since it's scheduled to run before -int-rewrite.
+	struct IntSat : ModulePass
+	{
+		static char ID;
+		IntSat() : ModulePass(ID) {}
 
-	virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-		AU.setPreservesAll();
-	}
+		virtual void getAnalysisUsage(AnalysisUsage &AU) const
+		{
+			AU.setPreservesAll();
+		}
 
-	virtual bool runOnModule(Module &);
+		virtual bool runOnModule(Module &);
 
-private:
-	Diagnostic Diag;
-	Function *Trap;
-	OwningPtr<DataLayout> TD;
-	unsigned MD_bug;
+	private:
+		Diagnostic Diag;
+		Function *Trap;
+		std::unique_ptr<DataLayout> TD;
+		unsigned MD_bug;
 
-	SmallVector<PathGen::Edge, 32> BackEdges;
-	SmallPtrSet<Value *, 32> ReportedBugs;
+		SmallVector<PathGen::Edge, 32> BackEdges;
+		SmallPtrSet<Value *, 32> ReportedBugs;
 
-	void runOnFunction(Function &);
-	void check(CallInst *);
-	void classify(Value *);
-	SMTStatus query(Value *, Instruction *);
-};
+		void runOnFunction(Function &);
+		void check(CallInst *);
+		void classify(Value *);
+		SMTStatus query(Value *, Instruction *);
+	};
 
 } // anonymous namespace
 
-bool IntSat::runOnModule(Module &M) {
+bool IntSat::runOnModule(Module &M)
+{
 	Trap = M.getFunction("int.sat");
 	if (!Trap)
 		return false;
 	TD.reset(new DataLayout(&M));
 	MD_bug = M.getContext().getMDKindID("bug");
-	for (Module::iterator i = M.begin(), e = M.end(); i != e; ++i) {
+	for (Module::iterator i = M.begin(), e = M.end(); i != e; ++i)
+	{
 		Function &F = *i;
 		if (F.empty())
 			continue;
@@ -71,18 +77,21 @@ bool IntSat::runOnModule(Module &M) {
 	return false;
 }
 
-void IntSat::runOnFunction(Function &F) {
+void IntSat::runOnFunction(Function &F)
+{
 	BackEdges.clear();
 	FindFunctionBackedges(F, BackEdges);
 	ReportedBugs.clear();
-	for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i) {
+	for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i)
+	{
 		CallInst *CI = dyn_cast<CallInst>(&*i);
 		if (CI && CI->getCalledFunction() == Trap)
 			check(CI);
 	}
 }
 
-void IntSat::check(CallInst *I) {
+void IntSat::check(CallInst *I)
+{
 	assert(I->getNumArgOperands() >= 1);
 	Value *V = I->getArgOperand(0);
 	assert(V->getType()->isIntegerTy(1));
@@ -92,7 +101,7 @@ void IntSat::check(CallInst *I) {
 		return;
 
 	const DebugLoc &DbgLoc = I->getDebugLoc();
-	if (DbgLoc.isUnknown())
+	if (!DbgLoc)
 		return;
 	if (!I->getMetadata(MD_bug))
 		return;
@@ -107,7 +116,8 @@ void IntSat::check(CallInst *I) {
 		ReportedBugs.insert(V);
 }
 
-SMTStatus IntSat::query(Value *V, Instruction *I) {
+SMTStatus IntSat::query(Value *V, Instruction *I)
+{
 	SMTSolver SMT(SMTModelOpt);
 	ValueGen VG(*TD, SMT);
 	PathGen PG(VG, BackEdges);
@@ -125,15 +135,17 @@ SMTStatus IntSat::query(Value *V, Instruction *I) {
 	Diag.classify(I);
 	Diag.backtrace(I);
 	// Output model.
-	if (SMTModelOpt && Model) {
+	if (SMTModelOpt && Model)
+	{
 		Diag << "model: |\n";
 		raw_ostream &OS = Diag.os();
-		for (ValueGen::iterator i = VG.begin(), e = VG.end(); i != e; ++i) {
+		for (ValueGen::iterator i = VG.begin(), e = VG.end(); i != e; ++i)
+		{
 			Value *KeyV = i->first;
 			if (isa<Constant>(KeyV))
 				continue;
 			OS << "  ";
-			WriteAsOperand(OS, KeyV, false, Trap->getParent());
+			KeyV->printAsOperand(OS, false, Trap->getParent());
 			OS << ": ";
 			APInt Val;
 			SMT.eval(Model, i->second, Val);
@@ -151,4 +163,4 @@ SMTStatus IntSat::query(Value *V, Instruction *I) {
 char IntSat::ID;
 
 static RegisterPass<IntSat>
-X("int-sat", "Check int.sat for satisfiability", false, true);
+	X("int-sat", "Check int.sat for satisfiability", false, true);

@@ -1,32 +1,35 @@
 #define DEBUG_TYPE "int-libcalls"
-#include <llvm/IRBuilder.h>
-#include <llvm/Instructions.h>
-#include <llvm/Module.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/Module.h>
 #include <llvm/Pass.h>
-#include <llvm/Support/InstIterator.h>
+#include <llvm/IR/InstIterator.h>
 
 using namespace llvm;
 
-namespace {
+namespace
+{
 
-struct NamedParam {
-	const char *Name;
-	unsigned int Index;
-};
+	struct NamedParam
+	{
+		const char *Name;
+		unsigned int Index;
+	};
 
-struct IntLibcalls : ModulePass {
-	static char ID;
-	IntLibcalls() : ModulePass(ID) {}
+	struct IntLibcalls : ModulePass
+	{
+		static char ID;
+		IntLibcalls() : ModulePass(ID) {}
 
-	bool runOnModule(Module &);
+		bool runOnModule(Module &);
 
-private:
-	typedef IRBuilder<> BuilderTy;
-	BuilderTy *Builder;
+	private:
+		typedef IRBuilder<> BuilderTy;
+		BuilderTy *Builder;
 
-	void rewriteSize(Function *F);
-	void rewriteSizeAt(CallInst *I, NamedParam *NPs);
-};
+		void rewriteSize(Function *F);
+		void rewriteSizeAt(CallInst *I, NamedParam *NPs);
+	};
 
 } // anonymous namespace
 
@@ -37,8 +40,7 @@ static NamedParam LLVMSize[] = {
 	{"llvm.memmove.p0i8.p0i8.i64", 2},
 	{"llvm.memset.p0i8.i32", 2},
 	{"llvm.memset.p0i8.i64", 2},
-	{0, 0}
-};
+	{0, 0}};
 
 static NamedParam LinuxSize[] = {
 	{"copy_from_user", 2},
@@ -51,43 +53,49 @@ static NamedParam LinuxSize[] = {
 	{"memcpy_fromiovecend", 3},
 	{"memcpy_toiovec", 2},
 	{"memcpy_toiovecend", 2},
-	{"memcpy_toiovecend", 3},	
+	{"memcpy_toiovecend", 3},
 	{"memmove", 2},
 	{"memset", 2},
 	{"pci_free_consistent", 1},
 	{"sock_alloc_send_skb", 1},
 	{"sock_alloc_send_pskb", 1},
 	{"sock_alloc_send_pskb", 2},
-	{0, 0}
-};
+	{0, 0}};
 
 void insertIntSat(Value *, Instruction *, StringRef);
 
-bool IntLibcalls::runOnModule(Module &M) {
+bool IntLibcalls::runOnModule(Module &M)
+{
 	BuilderTy TheBuilder(M.getContext());
 	Builder = &TheBuilder;
-	for (Module::iterator i = M.begin(), e = M.end(); i != e; ++i) {
-		Function *F = i;
-		if (F->empty())
+
+	for (Function &F : M)
+	{
+		if (F.empty())
 			continue;
-		rewriteSize(F);
+		rewriteSize(&F);
 	}
 	return true;
 }
 
-void IntLibcalls::rewriteSize(Function *F) {
-	for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i) {
+void IntLibcalls::rewriteSize(Function *F)
+{
+	for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i)
+	{
 		CallInst *I = dyn_cast<CallInst>(&*i);
-		if (I && I->getCalledFunction()) {
+		if (I && I->getCalledFunction())
+		{
 			rewriteSizeAt(I, LLVMSize);
 			rewriteSizeAt(I, LinuxSize);
 		}
 	}
 }
 
-void IntLibcalls::rewriteSizeAt(CallInst *I, NamedParam *NPs) {
+void IntLibcalls::rewriteSizeAt(CallInst *I, NamedParam *NPs)
+{
 	StringRef Name = I->getCalledFunction()->getName();
-	for (NamedParam *NP = NPs; NP->Name; ++NP) {
+	for (NamedParam *NP = NPs; NP->Name; ++NP)
+	{
 		if (Name != NP->Name)
 			continue;
 		Value *Arg = I->getArgOperand(NP->Index);
@@ -102,4 +110,4 @@ void IntLibcalls::rewriteSizeAt(CallInst *I, NamedParam *NPs) {
 char IntLibcalls::ID;
 
 static RegisterPass<IntLibcalls>
-X("int-libcalls", "Rewrite well-known library calls");
+	X("int-libcalls", "Rewrite well-known library calls");

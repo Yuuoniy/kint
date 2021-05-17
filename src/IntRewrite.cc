@@ -1,66 +1,73 @@
 #define DEBUG_TYPE "int-rewrite"
-#include <llvm/DataLayout.h>
-#include <llvm/IRBuilder.h>
-#include <llvm/Instructions.h>
-#include <llvm/Intrinsics.h>
-#include <llvm/LLVMContext.h>
-#include <llvm/Metadata.h>
-#include <llvm/Module.h>
+#include <llvm/IR/DataLayout.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/Intrinsics.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Metadata.h>
+#include <llvm/IR/Module.h>
 #include <llvm/Pass.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
-#include <llvm/Analysis/Dominators.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ValueTracking.h>
 #include <llvm/Support/CommandLine.h>
-#include <llvm/Support/GetElementPtrTypeIterator.h>
-#include <llvm/Support/InstIterator.h>
+#include <llvm/IR/GetElementPtrTypeIterator.h>
+#include <llvm/IR/InstIterator.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
-
+#include <llvm/InitializePasses.h>
 using namespace llvm;
 
 static cl::opt<bool>
-WrapOpt("fwrapv", cl::desc("Use two's complement for signed integers"));
+	WrapOpt("fwrapv", cl::desc("Use two's complement for signed integers"));
 
-namespace {
+namespace
+{
 
-struct IntRewrite : FunctionPass {
-	static char ID;
-	IntRewrite() : FunctionPass(ID) {
-		PassRegistry &Registry = *PassRegistry::getPassRegistry();
-		initializeDominatorTreePass(Registry);
-		initializeLoopInfoPass(Registry);
-	}
+	struct IntRewrite : FunctionPass
+	{
+		static char ID;
+		IntRewrite() : FunctionPass(ID)
+		{
+			PassRegistry &Registry = *PassRegistry::getPassRegistry();
+			initializeDominatorTreeWrapperPassPass(Registry);
+			initializeLoopInfoWrapperPassPass(Registry);
+		}
 
-	virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-		AU.addRequired<DominatorTree>();
-		AU.addRequired<LoopInfo>();
-		AU.setPreservesCFG();
-	}
+		virtual void getAnalysisUsage(AnalysisUsage &AU) const
+		{
+			AU.addRequired<DominatorTreeWrapperPass>();
+			AU.addRequired<LoopInfoWrapperPass>();
+			AU.setPreservesCFG();
+		}
 
-	virtual bool runOnFunction(Function &);
+		virtual bool runOnFunction(Function &);
 
-private:
-	typedef IRBuilder<> BuilderTy;
-	BuilderTy *Builder;
+	private:
+		typedef IRBuilder<> BuilderTy;
+		BuilderTy *Builder;
 
-	DominatorTree *DT;
-	LoopInfo *LI;
-	DataLayout *TD;
+		DominatorTree *DT;
+		LoopInfo *LI;
+		const DataLayout *TD;
 
-	bool insertOverflowCheck(Instruction *, Intrinsic::ID, Intrinsic::ID);
-	bool insertDivCheck(Instruction *);
-	bool insertShiftCheck(Instruction *);
-	bool insertArrayCheck(Instruction *);
+		bool insertOverflowCheck(Instruction *, Intrinsic::ID, Intrinsic::ID);
+		bool insertDivCheck(Instruction *);
+		bool insertShiftCheck(Instruction *);
+		bool insertArrayCheck(Instruction *);
 
-	bool isObservable(Value *);
-};
+		bool isObservable(Value *);
+	};
 
 } // anonymous namespace
 
-static MDNode * findSink(Value *V) {
-	for (Value::use_iterator i = V->use_begin(), e = V->use_end(); i != e; ++i) {
-		if (Instruction *I = dyn_cast<Instruction>(*i)) {
+static MDNode *findSink(Value *V)
+{
+	for (Value::use_iterator i = V->use_begin(), e = V->use_end(); i != e; ++i)
+	{
+		if (Instruction *I = dyn_cast<Instruction>(*i))
+		{
 			if (MDNode *MD = I->getMetadata("sink"))
 				return MD;
 			if (isa<BinaryOperator>(I) || isa<CastInst>(I))
@@ -70,12 +77,14 @@ static MDNode * findSink(Value *V) {
 	return NULL;
 }
 
-static Instruction * insertIntSat(Value *V, Instruction *I, Instruction *IP, 
-		StringRef Bug, const DebugLoc &DbgLoc) {
+static Instruction *insertIntSat(Value *V, Instruction *I, Instruction *IP,
+								 StringRef Bug, const DebugLoc &DbgLoc)
+{
 	Module *M = IP->getParent()->getParent()->getParent();
 	LLVMContext &C = M->getContext();
 	FunctionType *T = FunctionType::get(Type::getVoidTy(C), Type::getInt1Ty(C), false);
-	Function *F = cast<Function>(M->getOrInsertFunction("int.sat", T));
+	FunctionCallee F_fun = (M->getOrInsertFunction("int.sat", T));
+	Function *F = cast<Function>(F_fun.getCallee());
 	F->setDoesNotThrow();
 	CallInst *CI = CallInst::Create(F, V, "", IP);
 	CI->setDebugLoc(DbgLoc);
@@ -84,8 +93,10 @@ static Instruction * insertIntSat(Value *V, Instruction *I, Instruction *IP,
 	CI->setMetadata("bug", MD);
 
 	// Add taint metadata
-	for (unsigned i = 0; i < I->getNumOperands(); ++i) {
-		if (MDNode *MD = I->getMetadata("taint")) {
+	for (unsigned i = 0; i < I->getNumOperands(); ++i)
+	{
+		if (MDNode *MD = I->getMetadata("taint"))
+		{
 			CI->setMetadata("taint", MD);
 			break;
 		}
@@ -97,42 +108,48 @@ static Instruction * insertIntSat(Value *V, Instruction *I, Instruction *IP,
 	return CI;
 }
 
-void insertIntSat(Value *V, Instruction *I, StringRef Bug) {
+void insertIntSat(Value *V, Instruction *I, StringRef Bug)
+{
 	insertIntSat(V, I, I, Bug, I->getDebugLoc());
 }
 
-void insertIntSat(Value *V, Instruction *I) {
+void insertIntSat(Value *V, Instruction *I)
+{
 	insertIntSat(V, I, I->getOpcodeName());
 }
 
-bool IntRewrite::runOnFunction(Function &F) {
+bool IntRewrite::runOnFunction(Function &F)
+{
 	BuilderTy TheBuilder(F.getContext());
 	Builder = &TheBuilder;
-	DT = &getAnalysis<DominatorTree>();
-	LI = &getAnalysis<LoopInfo>();
-	TD = getAnalysisIfAvailable<DataLayout>();
+	DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+	LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+	TD = &F.getParent()->getDataLayout();
 	bool Changed = false;
-	for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i) {
+	for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i)
+	{
 		Instruction *I = &*i;
 		if (!isa<BinaryOperator>(I) && !isa<GetElementPtrInst>(I))
 			continue;
 		Builder->SetInsertPoint(I);
-		switch (I->getOpcode()) {
-		default: continue;
+		switch (I->getOpcode())
+		{
+		default:
+			continue;
 		case Instruction::Add:
 			Changed |= insertOverflowCheck(I,
-				Intrinsic::sadd_with_overflow,
-				Intrinsic::uadd_with_overflow);
+										   Intrinsic::sadd_with_overflow,
+										   Intrinsic::uadd_with_overflow);
 			break;
 		case Instruction::Sub:
 			Changed |= insertOverflowCheck(I,
-				Intrinsic::ssub_with_overflow,
-				Intrinsic::usub_with_overflow);
+										   Intrinsic::ssub_with_overflow,
+										   Intrinsic::usub_with_overflow);
 			break;
 		case Instruction::Mul:
 			Changed |= insertOverflowCheck(I,
-				Intrinsic::smul_with_overflow,
-				Intrinsic::umul_with_overflow);
+										   Intrinsic::smul_with_overflow,
+										   Intrinsic::umul_with_overflow);
 			break;
 		case Instruction::SDiv:
 		case Instruction::UDiv:
@@ -154,27 +171,32 @@ bool IntRewrite::runOnFunction(Function &F) {
 	return Changed;
 }
 
-bool IntRewrite::isObservable(Value *V) {
+bool IntRewrite::isObservable(Value *V)
+{
 	Instruction *I = dyn_cast<Instruction>(V);
 	if (!I)
 		return false;
 	BasicBlock *BB = I->getParent();
-	switch (I->getOpcode()) {
-	default: break;
+	switch (I->getOpcode())
+	{
+	default:
+		break;
 	case Instruction::Br:
 	case Instruction::IndirectBr:
 	case Instruction::Switch:
-		if (Loop *L = LI->getLoopFor(BB)) {
+		if (Loop *L = LI->getLoopFor(BB))
+		{
 			if (L->isLoopExiting(BB))
 				return true;
 		}
 		return false;
 	}
 	// Default: observable if unsafe to speculately execute.
-	return !isSafeToSpeculativelyExecute(I, TD);
+	return !isSafeToSpeculativelyExecute(V);
 }
 
-bool IntRewrite::insertOverflowCheck(Instruction *I, Intrinsic::ID SID, Intrinsic::ID UID) {
+bool IntRewrite::insertOverflowCheck(Instruction *I, Intrinsic::ID SID, Intrinsic::ID UID)
+{
 	// Skip pointer subtraction, where LLVM converts both operands into
 	// integers first.
 	Value *L = I->getOperand(0), *R = I->getOperand(1);
@@ -185,14 +207,16 @@ bool IntRewrite::insertOverflowCheck(Instruction *I, Intrinsic::ID SID, Intrinsi
 	Intrinsic::ID ID = hasNSW ? SID : UID;
 	Module *M = I->getParent()->getParent()->getParent();
 	Function *F = Intrinsic::getDeclaration(M, ID, I->getType());
-	CallInst *CI = Builder->CreateCall2(F, L, R);
+	CallInst *CI = Builder->CreateCall(F, {L, R});
 	Value *V = Builder->CreateExtractValue(CI, 1);
 	// llvm.[s|u][add|sub|mul].with.overflow.*
 	StringRef Anno = F->getName().substr(5, 4);
-	if (hasNSW) {
+	if (hasNSW)
+	{
 		// Insert the check eagerly for signed integer overflow,
 		// if -fwrapv is not given.
-		if (!WrapOpt) {
+		if (!WrapOpt)
+		{
 			insertIntSat(V, I, Anno);
 			return true;
 		}
@@ -209,13 +233,16 @@ bool IntRewrite::insertOverflowCheck(Instruction *I, Intrinsic::ID SID, Intrinsi
 
 	Worklist.push_back(I);
 	Visited.insert(I);
-	while (!Worklist.empty()) {
+	while (!Worklist.empty())
+	{
 		Value *E = Worklist.back();
 		Worklist.pop_back();
-		for (Value::use_iterator i = E->use_begin(), e = E->use_end(); i != e; ++i) {
-			User *U = *i;
+		for (Value::use_iterator i = E->use_begin(), e = E->use_end(); i != e; ++i)
+		{
+			User *U = (*i).getUser();
 			// Observable point.
-			if (isObservable(U)) {
+			if (isObservable(U))
+			{
 				// U must be an instruction for now.
 				BasicBlock *ObBB = cast<Instruction>(U)->getParent();
 				// If the instruction's own BB is an observation
@@ -224,7 +251,8 @@ bool IntRewrite::insertOverflowCheck(Instruction *I, Intrinsic::ID SID, Intrinsi
 				//
 				// If ObBB is not dominated by BB (e.g., due to
 				// loops), fall back.
-				if (ObBB == BB || !DT->dominates(BB, ObBB)) {
+				if (ObBB == BB || !DT->dominates(BB, ObBB))
+				{
 					insertIntSat(V, I, Anno);
 					return true;
 				}
@@ -234,39 +262,43 @@ bool IntRewrite::insertOverflowCheck(Instruction *I, Intrinsic::ID SID, Intrinsi
 			// Add to worklist if new.
 			if (U->use_empty())
 				continue;
-			if (Visited.insert(U))
+			if (Visited.insert(U).second)
 				Worklist.push_back(U);
 		}
 	}
 
 	const DebugLoc &DbgLoc = I->getDebugLoc();
-	for (ObSet::iterator i = ObPoints.begin(), e = ObPoints.end(); i != e; ++i) {
+	for (ObSet::iterator i = ObPoints.begin(), e = ObPoints.end(); i != e; ++i)
+	{
 		BasicBlock *ObBB = *i;
 		insertIntSat(V, I, ObBB->getTerminator(), Anno, DbgLoc);
 	}
 	return true;
 }
 
-bool IntRewrite::insertDivCheck(Instruction *I) {
+bool IntRewrite::insertDivCheck(Instruction *I)
+{
 	Value *R = I->getOperand(1);
 	// R == 0.
 	Value *V = Builder->CreateIsNull(R);
 	// L == INT_MIN && R == -1.
-	if (I->getOpcode() == Instruction::SDiv) {
+	if (I->getOpcode() == Instruction::SDiv)
+	{
 		Value *L = I->getOperand(0);
 		IntegerType *T = cast<IntegerType>(I->getType());
 		unsigned n = T->getBitWidth();
 		Constant *SMin = ConstantInt::get(T, APInt::getSignedMinValue(n));
 		Constant *MinusOne = Constant::getAllOnesValue(T);
 		V = Builder->CreateOr(V, Builder->CreateAnd(
-			Builder->CreateICmpEQ(L, SMin),
-			Builder->CreateICmpEQ(R, MinusOne)));
+									 Builder->CreateICmpEQ(L, SMin),
+									 Builder->CreateICmpEQ(R, MinusOne)));
 	}
 	insertIntSat(V, I);
 	return true;
 }
 
-bool IntRewrite::insertShiftCheck(Instruction *I) {
+bool IntRewrite::insertShiftCheck(Instruction *I)
+{
 	Value *Amount = I->getOperand(1);
 	IntegerType *T = cast<IntegerType>(Amount->getType());
 	Constant *C = ConstantInt::get(T, T->getBitWidth());
@@ -275,13 +307,15 @@ bool IntRewrite::insertShiftCheck(Instruction *I) {
 	return true;
 }
 
-bool IntRewrite::insertArrayCheck(Instruction *I) {
+bool IntRewrite::insertArrayCheck(Instruction *I)
+{
 	Value *V = NULL;
 	gep_type_iterator i = gep_type_begin(I), e = gep_type_end(I);
-	for (; i != e; ++i) {
+	for (; i != e; ++i)
+	{
 		// For arr[idx], check idx >u n.  Here we don't use idx >= n
 		// since it is unclear if the pointer will be dereferenced.
-		ArrayType *T = dyn_cast<ArrayType>(*i);
+		ArrayType *T = dyn_cast<ArrayType>(i.getIndexedType());
 		if (!T)
 			continue;
 		uint64_t n = T->getNumElements();
@@ -307,4 +341,4 @@ bool IntRewrite::insertArrayCheck(Instruction *I) {
 char IntRewrite::ID;
 
 static RegisterPass<IntRewrite>
-X("int-rewrite", "Insert int.sat calls", false, false);
+	X("int-rewrite", "Insert int.sat calls", false, false);

@@ -1,43 +1,49 @@
 #define DEBUG_TYPE "load-rewrite"
-#include <llvm/IRBuilder.h>
-#include <llvm/Instructions.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/Pass.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Transforms/Utils/SSAUpdater.h>
-#include <llvm/Support/InstIterator.h>
+#include <llvm/IR/InstIterator.h>
 
 using namespace llvm;
 
-namespace {
+namespace
+{
 
-struct LoadRewrite : FunctionPass {
-	static char ID;
-	LoadRewrite() : FunctionPass(ID) {
-		PassRegistry &Registry = *PassRegistry::getPassRegistry();
-		initializeScalarEvolutionPass(Registry);
-	}
+	struct LoadRewrite : FunctionPass
+	{
+		static char ID;
+		LoadRewrite() : FunctionPass(ID)
+		{
+			PassRegistry &Registry = *PassRegistry::getPassRegistry();
+			initializeScalarEvolutionWrapperPassPass(Registry);
+		}
 
-	virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-		AU.setPreservesCFG();
-		AU.addRequired<ScalarEvolution>();
-	}
+		virtual void getAnalysisUsage(AnalysisUsage &AU) const
+		{
+			AU.setPreservesCFG();
+			AU.addRequired<ScalarEvolutionWrapperPass>();
+		}
 
-	virtual bool runOnFunction(Function &);
+		virtual bool runOnFunction(Function &);
 
-private:
-	ScalarEvolution *SE;
+	private:
+		ScalarEvolution *SE;
 
-	bool hoist(LoadInst *);
-};
+		bool hoist(LoadInst *);
+	};
 
 } // anonymous namespace
 
-bool LoadRewrite::runOnFunction(Function &F) {
-	SE = &getAnalysis<ScalarEvolution>();
+bool LoadRewrite::runOnFunction(Function &F)
+{
+	SE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
 	bool Changed = false;
-	for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i) {
+	for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i)
+	{
 		LoadInst *I = dyn_cast<LoadInst>(&*i);
 		if (I && !I->isVolatile())
 			Changed |= hoist(I);
@@ -46,18 +52,24 @@ bool LoadRewrite::runOnFunction(Function &F) {
 }
 
 static std::pair<Value *, const SCEVConstant *>
-extractPointerBaseAndOffset(const SCEV *S) {
+extractPointerBaseAndOffset(const SCEV *S)
+{
 	Value *V = NULL;
 	const SCEVConstant *Offset = NULL;
-	if (const SCEVUnknown *Unknown = dyn_cast<SCEVUnknown>(S)) {
+	if (const SCEVUnknown *Unknown = dyn_cast<SCEVUnknown>(S))
+	{
 		// p + 0.
 		V = Unknown->getValue();
-	} else if (const SCEVAddExpr *Add = dyn_cast<SCEVAddExpr>(S)) {
+	}
+	else if (const SCEVAddExpr *Add = dyn_cast<SCEVAddExpr>(S))
+	{
 		// p + offset.
-		if (Add->getNumOperands() == 2) {
+		if (Add->getNumOperands() == 2)
+		{
 			const SCEVConstant *L = dyn_cast<SCEVConstant>(Add->getOperand(0));
 			const SCEVUnknown *R = dyn_cast<SCEVUnknown>(Add->getOperand(1));
-			if (L && R) {
+			if (L && R)
+			{
 				V = R->getValue();
 				Offset = L;
 			}
@@ -70,13 +82,14 @@ extractPointerBaseAndOffset(const SCEV *S) {
 	return std::make_pair(V, Offset);
 }
 
-bool LoadRewrite::hoist(LoadInst *I) {
+bool LoadRewrite::hoist(LoadInst *I)
+{
 	if (I->use_empty())
 		return false;
 	const SCEV *S = SE->getSCEV(I->getPointerOperand());
 	Value *BaseV;
 	const SCEVConstant *Offset;
-	tie(BaseV, Offset) = extractPointerBaseAndOffset(S);
+	std::tie(BaseV, Offset) = extractPointerBaseAndOffset(S);
 	if (!BaseV)
 		return false;
 
@@ -86,16 +99,17 @@ bool LoadRewrite::hoist(LoadInst *I) {
 	// 2) in the entry block, if Base is an argument or a global variable.
 	Instruction *IP;
 	if (Instruction *BaseI = dyn_cast<Instruction>(BaseV))
-		IP = ++BasicBlock::iterator(BaseI);
+		IP = &*(++BasicBlock::iterator(BaseI));
 	else
-		IP = F->getEntryBlock().begin();
+		IP = &*(F->getEntryBlock().begin());
 	// Skip phi nodes, if any.
 	if (isa<PHINode>(IP))
-		IP = IP->getParent()->getFirstInsertionPt();
+		IP = &*(IP->getParent()->getFirstInsertionPt());
 	IRBuilder<> Builder(IP);
 	Value *AddrV = BaseV;
 	// Offset is based on the type of char *.
-	if (Offset) {
+	if (Offset)
+	{
 		PointerType *PT = cast<PointerType>(BaseV->getType());
 		Type *Int8Ty = Type::getInt8PtrTy(PT->getContext(), PT->getAddressSpace());
 		AddrV = Builder.CreatePointerCast(AddrV, Int8Ty);
@@ -108,12 +122,15 @@ bool LoadRewrite::hoist(LoadInst *I) {
 	// Insert load.
 	LoadInst *LoadV = Builder.CreateLoad(AddrV, true);
 	// Update all loads with the new inserted one.
-	for (Function::iterator bi = F->begin(), be = F->end(); bi != be; ++bi) {
-		BasicBlock *BB = bi;
+	for (Function::iterator bi = F->begin(), be = F->end(); bi != be; ++bi)
+	{
+		BasicBlock *BB = &*bi;
 		Value *V = NULL;
-		for (BasicBlock::iterator i = BB->begin(), e = BB->end(); i != e; ++i) {
-			Instruction *I = i;
-			if (StoreInst *SI = dyn_cast<StoreInst>(I)) {
+		for (BasicBlock::iterator i = BB->begin(), e = BB->end(); i != e; ++i)
+		{
+			Instruction *I = &*i;
+			if (StoreInst *SI = dyn_cast<StoreInst>(I))
+			{
 				Value *StoreV = SI->getValueOperand();
 				if (StoreV->getType() != T)
 					continue;
@@ -122,13 +139,15 @@ bool LoadRewrite::hoist(LoadInst *I) {
 				V = StoreV;
 				continue;
 			}
-			if (!V) {
+			if (!V)
+			{
 				if (I == LoadV)
 					V = LoadV;
 				continue;
 			}
 			// Rewrite loads in the same bb of an earlier store.
-			if (LoadInst *LI = dyn_cast<LoadInst>(I)) {
+			if (LoadInst *LI = dyn_cast<LoadInst>(I))
+			{
 				if (LI->isVolatile())
 					continue;
 				if (LI->getType() != T)
@@ -142,7 +161,8 @@ bool LoadRewrite::hoist(LoadInst *I) {
 		if (V)
 			SSA.AddAvailableValue(BB, V);
 	}
-	for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i) {
+	for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ++i)
+	{
 		LoadInst *LI = dyn_cast<LoadInst>(&*i);
 		if (!LI || LI->isVolatile() || LI->use_empty())
 			continue;
@@ -150,9 +170,8 @@ bool LoadRewrite::hoist(LoadInst *I) {
 			continue;
 		if (S != SE->getSCEV(LI->getPointerOperand()))
 			continue;
-		for (Value::use_iterator ui = LI->use_begin(), ue = LI->use_end(); ui != ue; ) {
-			Use &U = ui.getUse();
-			ui++;
+		for (Use &U : LI->uses())
+		{
 			SSA.RewriteUse(U);
 		}
 	}
@@ -163,4 +182,4 @@ bool LoadRewrite::hoist(LoadInst *I) {
 char LoadRewrite::ID;
 
 static RegisterPass<LoadRewrite>
-X("load-rewrite", "Rewrite load instructions");
+	X("load-rewrite", "Rewrite load instructions");

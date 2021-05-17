@@ -3,35 +3,42 @@
 // is set to either 0 (for shl/lshr) or the sign (ashr).
 
 #define DEBUG_TYPE "ideal-shift"
-#include <llvm/Constants.h>
-#include <llvm/Instructions.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/Pass.h>
-#include <llvm/Support/InstIterator.h>
+#include <llvm/IR/InstIterator.h>
 
 using namespace llvm;
 
-namespace {
+namespace
+{
 
-struct IdealShift : FunctionPass {
-	static char ID;
-	IdealShift() : FunctionPass(ID) {}
+	struct IdealShift : FunctionPass
+	{
+		static char ID;
+		IdealShift() : FunctionPass(ID) {}
 
-	virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-		AU.setPreservesAll();
-	}
+		virtual void getAnalysisUsage(AnalysisUsage &AU) const
+		{
+			AU.setPreservesAll();
+		}
 
-	virtual bool runOnFunction(Function &);
-};
+		virtual bool runOnFunction(Function &);
+	};
 
 } // anonymous namespace
 
-bool IdealShift::runOnFunction(Function &F) {
+bool IdealShift::runOnFunction(Function &F)
+{
 	bool Changed = false;
-	for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e; ) {
+	for (inst_iterator i = inst_begin(F), e = inst_end(F); i != e;)
+	{
 		Instruction *I = &*i++;
 		unsigned Opcode = I->getOpcode();
-		switch (Opcode) {
-		default: continue;
+		switch (Opcode)
+		{
+		default:
+			continue;
 		case Instruction::Shl:
 		case Instruction::LShr:
 		case Instruction::AShr:
@@ -71,4 +78,4 @@ bool IdealShift::runOnFunction(Function &F) {
 char IdealShift::ID;
 
 static RegisterPass<IdealShift>
-X("ideal-shift", "Rewrite shift instructions for ideal results for oversized shifting amount");
+	X("ideal-shift", "Rewrite shift instructions for ideal results for oversized shifting amount");

@@ -2,9 +2,11 @@
 
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/IR/Instructions.h>
 #include "SMTSolver.h"
 
-namespace llvm {
+namespace llvm
+{
 	class BasicBlock;
 	class BranchInst;
 	class DominatorTree;
@@ -14,7 +16,8 @@ namespace llvm {
 
 class ValueGen;
 
-class PathGen {
+class PathGen
+{
 public:
 	typedef llvm::DenseMap<llvm::BasicBlock *, SMTExpr> BBExprMap;
 	typedef BBExprMap::iterator iterator;
@@ -34,7 +37,7 @@ private:
 	BBExprMap Cache;
 
 	bool isBackedge(llvm::BasicBlock *, llvm::BasicBlock *);
-	SMTExpr getTermGuard(llvm::TerminatorInst *I, llvm::BasicBlock *BB);
+	SMTExpr getTermGuard(llvm::Instruction *I, llvm::BasicBlock *BB);
 	SMTExpr getTermGuard(llvm::BranchInst *I, llvm::BasicBlock *BB);
 	SMTExpr getTermGuard(llvm::SwitchInst *I, llvm::BasicBlock *BB);
 	SMTExpr getPHIGuard(llvm::BasicBlock *BB, llvm::BasicBlock *Pred);

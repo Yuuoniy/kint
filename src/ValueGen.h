@@ -1,19 +1,20 @@
 #pragma once
 
-#include <llvm/DataLayout.h>
+#include <llvm/IR/DataLayout.h>
 #include <llvm/ADT/DenseMap.h>
 #include "SMTSolver.h"
 
-class ValueGen {
+class ValueGen
+{
 public:
-	llvm::DataLayout &TD;
+	const llvm::DataLayout &TD;
 	SMTSolver &SMT;
 
 	typedef llvm::DenseMap<llvm::Value *, SMTExpr> ValueExprMap;
 	typedef ValueExprMap::iterator iterator;
 	ValueExprMap Cache;
 
-	ValueGen(llvm::DataLayout &, SMTSolver &);
+	ValueGen(const llvm::DataLayout &, SMTSolver &);
 	~ValueGen();
 
 	static bool isAnalyzable(llvm::Value *);

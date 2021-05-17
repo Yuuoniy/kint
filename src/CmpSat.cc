@@ -1,63 +1,72 @@
 #define DEBUG_TYPE "cmp-sat"
-#include <llvm/DataLayout.h>
-#include <llvm/Instructions.h>
+#include <llvm/IR/DataLayout.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/Pass.h>
-#include <llvm/ADT/OwningPtr.h>
-#include <llvm/Analysis/Dominators.h>
+// #include <llvm/ADT/OwningPtr.h>
+#include <llvm/IR/Dominators.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
+#include <llvm/Analysis/CFG.h>
 #include "Diagnostic.h"
 #include "PathGen.h"
 #include "ValueGen.h"
 
 using namespace llvm;
 
-namespace {
+namespace
+{
 
-typedef const char *CmpStatus;
-static CmpStatus CMP_FALSE = "comparison always false";
-static CmpStatus CMP_TRUE = "comparison always true";
+	typedef const char *CmpStatus;
+	static CmpStatus CMP_FALSE = "comparison always false";
+	static CmpStatus CMP_TRUE = "comparison always true";
 
-struct CmpSat : FunctionPass {
-	static char ID;
-	CmpSat() : FunctionPass(ID) {
-		PassRegistry &Registry = *PassRegistry::getPassRegistry();
-		initializeDataLayoutPass(Registry);
-		initializeDominatorTreePass(Registry);
-	}
-
-	virtual void getAnalysisUsage(AnalysisUsage &AU) const {
-		AU.addRequired<DataLayout>();
-		AU.addRequired<DominatorTree>();
-		AU.setPreservesAll();
-	}
-
-	virtual bool runOnFunction(Function &F) {
-		DL = &getAnalysis<DataLayout>();
-		DT = &getAnalysis<DominatorTree>();
-		FindFunctionBackedges(F, Backedges);
-		for (Function::iterator i = F.begin(), e = F.end(); i != e; ++i) {
-			BranchInst *BI = dyn_cast<BranchInst>(i->getTerminator());
-			if (!BI || !BI->isConditional())
-				continue;
-			check(BI);
+	struct CmpSat : FunctionPass
+	{
+		static char ID;
+		CmpSat() : FunctionPass(ID)
+		{
+			PassRegistry &Registry = *PassRegistry::getPassRegistry();
+			// initializeDataLayoutPass(Registry);
+			initializeDominatorTreeWrapperPassPass(Registry);
 		}
-		Backedges.clear();
-		return false;
-	}
 
-private:
-	Diagnostic Diag;
-	DataLayout *DL;
-	DominatorTree *DT;
-	SmallVector<PathGen::Edge, 32> Backedges;
+		virtual void getAnalysisUsage(AnalysisUsage &AU) const
+		{
+			// AU.addRequired<DataLayout>();
+			AU.addRequired<DominatorTreeWrapperPass>();
+			AU.setPreservesAll();
+		}
 
-	void check(BranchInst *);
-};
+		virtual bool runOnFunction(Function &F)
+		{
+			// DL = &getAnalysis<DataLayout>();
+			DL = &F.getParent()->getDataLayout();
+			DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+			FindFunctionBackedges(F, Backedges);
+			for (Function::iterator i = F.begin(), e = F.end(); i != e; ++i)
+			{
+				BranchInst *BI = dyn_cast<BranchInst>(i->getTerminator());
+				if (!BI || !BI->isConditional())
+					continue;
+				check(BI);
+			}
+			Backedges.clear();
+			return false;
+		}
+
+	private:
+		Diagnostic Diag;
+		const DataLayout *DL;
+		DominatorTree *DT;
+		SmallVector<PathGen::Edge, 32> Backedges;
+
+		void check(BranchInst *);
+	};
 
 } // anonymous namespace
 
-void CmpSat::check(BranchInst *I) {
+void CmpSat::check(BranchInst *I)
+{
 	BasicBlock *BB = I->getParent();
 	Value *V = I->getCondition();
 	SMTSolver SMT(false);
@@ -69,9 +78,12 @@ void CmpSat::check(BranchInst *I) {
 	SMTStatus Status = SMT.query(Query);
 	SMT.decref(Query);
 	CmpStatus Reason = 0;
-	if (Status == SMT_UNSAT) {
+	if (Status == SMT_UNSAT)
+	{
 		Reason = CMP_FALSE;
-	} else {
+	}
+	else
+	{
 		SMTExpr NotValuePred = SMT.bvnot(ValuePred);
 		Query = SMT.bvand(NotValuePred, PathPred);
 		Status = SMT.query(Query);
@@ -89,4 +101,4 @@ void CmpSat::check(BranchInst *I) {
 char CmpSat::ID;
 
 static RegisterPass<CmpSat>
-X("cmp-sat", "Detecting bogus comparisons via satisfiability", false, true);
+	X("cmp-sat", "Detecting bogus comparisons via satisfiability", false, true);
